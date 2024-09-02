@@ -3,6 +3,7 @@
     using System;
     using System.Collections.Generic;
     using Core;
+    using System.Text;
     using Tokenization.Scanner;
     using Tokens;
 
@@ -26,7 +27,8 @@
         /// </summary>
         private const int EndOfFileSearchRange = 2048;
 
-        private static ReadOnlySpan<byte> StartXRefBytes => "startxref"u8;
+        private static StartXReferenceToken StartXRef = new StartXReferenceToken("startxref");
+        private static StartXReferenceToken StartRef = new StartXReferenceToken("startref");
 
         public static long GetFirstCrossReferenceOffset(IInputBytes bytes, ISeekableTokenScanner scanner, bool isLenientParsing)
         {
@@ -44,15 +46,7 @@
 
             var offsetFromEnd = fileLength < EndOfFileSearchRange ? (int)fileLength : EndOfFileSearchRange;
 
-            var startXrefPosition = GetStartXrefPosition(bytes, offsetFromEnd);
-
-            scanner.Seek(startXrefPosition);
-
-            if (!scanner.TryReadToken(out OperatorToken startXrefToken) || startXrefToken.Data != "startxref")
-            {
-                throw new InvalidOperationException($"The start xref position we found was not correct. Found {startXrefPosition} but it was occupied by token {scanner.CurrentToken}.");
-            }
-
+            long startXrefPosition = GetStartXrefPosition(bytes, scanner, offsetFromEnd, isLenientParsing, out var startXRefTokenFound);
             NumericToken? numeric = null;
             while (scanner.MoveNext())
             {
@@ -64,19 +58,43 @@
 
                 if (!(scanner.CurrentToken is CommentToken))
                 {
-                    throw new PdfDocumentFormatException($"Found an unexpected token following 'startxref': {scanner.CurrentToken}.");
+                    throw new PdfDocumentFormatException($"Found an unexpected token following '{startXRefTokenFound.Token}': {scanner.CurrentToken}.");
                 }
             }
 
             if (numeric is null)
             {
-                throw new PdfDocumentFormatException($"Could not find the numeric value following 'startxref'. Searching from position {startXrefPosition}.");
+                throw new PdfDocumentFormatException($"Could not find the numeric value following '{startXRefTokenFound.Token}'. Searching from position {startXrefPosition}.");
             }
 
             return numeric.Long;
         }
 
-        private static long GetStartXrefPosition(IInputBytes bytes, int offsetFromEnd)
+        private static long GetStartXrefPosition(IInputBytes bytes, ISeekableTokenScanner scanner, int offsetFromEnd, bool isLenientParsing, out StartXReferenceToken tokenFound)
+        {
+            StartXReferenceToken[] searchedTokens = isLenientParsing ? [StartXRef, StartRef] : [StartXRef];
+            foreach (var searchedToken in searchedTokens)
+            {
+                var startXrefPosition = GetStartXrefPosition(bytes, offsetFromEnd, searchedToken);
+                if (startXrefPosition.HasValue)
+                {
+                    scanner.Seek(startXrefPosition.Value);
+
+                    if (!scanner.TryReadToken(out OperatorToken startXrefToken) ||
+                        startXrefToken.Data != searchedToken.Token)
+                    {
+                        throw new InvalidOperationException(
+                            $"The start xref position we found was not correct. Found {startXrefPosition} but it was occupied by token {scanner.CurrentToken}.");
+                    }
+
+                    tokenFound = searchedToken;
+                    return startXrefPosition.Value;
+                }
+            }
+            throw new PdfDocumentFormatException($"Could not find the startxref within the last {offsetFromEnd} characters.");
+        }
+
+        private static long? GetStartXrefPosition(IInputBytes bytes, int offsetFromEnd, StartXReferenceToken searchedToken)
         {
             var startXrefs = new List<int>();
 
@@ -94,7 +112,7 @@
                 // Starting scanning the file bytes.
                 while (bytes.MoveNext())
                 {
-                    if (bytes.CurrentByte == StartXRefBytes[index])
+                    if (bytes.CurrentByte == searchedToken.Bytes[index])
                     {
                         // We might be reading "startxref".
                         index++;
@@ -104,10 +122,10 @@
                         index = 0;
                     }
 
-                    if (index == StartXRefBytes.Length)
+                    if (index == searchedToken.Bytes.Length)
                     {
                         // Add this "startxref" (position from the start of the document to the first 's').
-                        startXrefs.Add((int)bytes.CurrentOffset - StartXRefBytes.Length);
+                        startXrefs.Add((int)bytes.CurrentOffset - searchedToken.Bytes.Length);
 
                         // Continue scanning in case there are further "startxref"s. Not sure if this ever happens.
                         index = 0;
@@ -119,10 +137,16 @@
             
             if (startXrefs.Count == 0)
             {
-                throw new PdfDocumentFormatException($"Could not find the startxref within the last {offsetFromEnd} characters.");
+                return null;
             }
 
             return startXrefs[startXrefs.Count - 1];
+        }
+
+        private readonly struct StartXReferenceToken(string token)
+        {
+            public byte[] Bytes { get; } = Encoding.UTF8.GetBytes(token);
+            public string Token { get; } = token;
         }
     }
 }
