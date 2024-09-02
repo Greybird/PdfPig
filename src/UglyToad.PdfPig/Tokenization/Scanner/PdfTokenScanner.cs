@@ -171,6 +171,35 @@
                     return false;
                 }
 
+                if (ReferenceEquals(coreTokenScanner.CurrentToken, OperatorToken.Xref) ||
+                    ReferenceEquals(coreTokenScanner.CurrentToken, OperatorToken.StartXref))
+                {
+                    if (readStream && readTokens[0] is StreamToken streamRead)
+                    {
+                        readTokens.Clear();
+                        readTokens.Add(streamRead);
+                        coreTokenScanner.Seek(previousTokenPositions[0]);
+                        break;
+                    }
+
+                    if (readTokens.Count == 1)
+                    {
+                        // An obj was encountered after reading the actual token and the object and generation number of the following token.
+                        var actualReference = new IndirectReference(objectNumber.Int, generation.Int);
+                        var actualToken = encryptionHandler.Decrypt(actualReference, readTokens[0]);
+
+                        CurrentToken = new ObjectToken(startPosition, actualReference, actualToken);;
+                        readTokens.Clear();
+                        coreTokenScanner.Seek(previousTokenPositions[0]);
+
+                        return true;
+                    }
+
+                    // This should never happen.
+                    Debug.Assert(false, "Encountered a '{' operator before the end of the previous object.");
+                    return false;
+                }
+
                 if (IsToken(coreTokenScanner, OperatorToken.StartStream, out var actualStartStreamPosition))
                 {
                     var streamIdentifier = new IndirectReference(objectNumber.Long, generation.Int);
