@@ -5,6 +5,7 @@
     using CrossReference;
     using Core;
     using Parts.CrossReference;
+    using System.Text.RegularExpressions;
     using Tokenization;
     using Tokenization.Scanner;
     using Tokens;
@@ -34,6 +35,19 @@
                 if (operatorToken.Data == "xref")
                 {
                     scanner.MoveNext();
+                }
+                else if (isLenientParsing)
+                {
+                    var match = Regex.Match(operatorToken.Data, @"xref(\d+)");
+                    if (match.Success)
+                    {
+                        scanner.Seek(scanner.CurrentPosition - operatorToken.Data.Length + "xref".Length);
+                        scanner.MoveNext();
+                    }
+                    else
+                    {
+                        throw new PdfDocumentFormatException($"Unexpected operator in xref position: {operatorToken}.");
+                    }
                 }
                 else
                 {
@@ -104,6 +118,12 @@
             builder.Dictionary = ParseTrailer(scanner, isLenientParsing);
 
             return builder.Build();
+        }
+
+        public static bool IsCrossReferenceMarker(ISeekableTokenScanner scanner, bool isLenientParsing)
+        {
+            return (scanner.CurrentToken is OperatorToken operatorToken && operatorToken.Data == "xref")
+                   || (isLenientParsing && scanner.CurrentToken is OperatorToken op && Regex.IsMatch(op.Data, @"xref(\d+)"));
         }
 
         private static int ProcessTokens(ReadOnlySpan<IToken> tokens, CrossReferenceTablePartBuilder builder, bool isLenientParsing,
