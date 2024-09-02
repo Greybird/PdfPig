@@ -135,7 +135,7 @@
 
             var readStream = false;
             // Read all tokens between obj and endobj.
-            while (coreTokenScanner.MoveNext() && !Equals(coreTokenScanner.CurrentToken, OperatorToken.EndObject))
+            while (coreTokenScanner.MoveNext() && !IsToken(coreTokenScanner, OperatorToken.EndObject, out _))
             {
                 if (coreTokenScanner.CurrentToken is CommentToken)
                 {
@@ -171,7 +171,7 @@
                     return false;
                 }
 
-                if (ReferenceEquals(coreTokenScanner.CurrentToken, OperatorToken.StartStream))
+                if (IsToken(coreTokenScanner, OperatorToken.StartStream, out var actualStartStreamPosition))
                 {
                     var streamIdentifier = new IndirectReference(objectNumber.Long, generation.Int);
 
@@ -185,7 +185,7 @@
                         callingObject = streamIdentifier;
 
                         // Read stream: special case.
-                        if (TryReadStream(coreTokenScanner.CurrentTokenStart, getLengthFromFile, out var stream))
+                        if (TryReadStream(actualStartStreamPosition.Value, getLengthFromFile, out var stream))
                         {
                             readTokens.Clear();
                             readTokens.Add(stream);
@@ -212,7 +212,7 @@
                 previousTokenPositions[2] = coreTokenScanner.CurrentTokenStart;
             }
 
-            if (!readStream && !ReferenceEquals(coreTokenScanner.CurrentToken, OperatorToken.EndObject))
+            if (!readStream && !IsToken(coreTokenScanner, OperatorToken.EndObject, out _))
             {
                 readTokens.Clear();
                 return false;
@@ -261,6 +261,24 @@
 
             readTokens.Clear();
             return true;
+        }
+
+        private bool IsToken(CoreTokenScanner scanner, OperatorToken token, [NotNullWhen(true)] out long? actualTokenStart)
+        {
+            if (ReferenceEquals(scanner.CurrentToken, token))
+            {
+                actualTokenStart = scanner.CurrentTokenStart;
+                return true;
+            }
+
+            if (parsingOptions.UseLenientParsing && scanner.CurrentToken is OperatorToken opToken && opToken.Data.EndsWith(token.Data))
+            {
+                actualTokenStart = scanner.CurrentTokenStart + opToken.Data.Length - token.Data.Length;
+                return true;
+            }
+
+            actualTokenStart = null;
+            return false;
         }
 
         private bool TryReadStream(long startStreamTokenOffset, bool getLength, [NotNullWhen(true)] out StreamToken? stream)
