@@ -157,7 +157,18 @@
                     tokenScanner.Seek(previousCrossReferenceLocation);
 
                     // parse xref stream
-                    if (!TryParseCrossReferenceStream(previousCrossReferenceLocation, pdfScanner, null, out var tablePart))
+                    bool crossReferenceStreamExtracted;
+                    CrossReferenceTablePart? extractedTablePart = null;
+                    try
+                    {
+                        crossReferenceStreamExtracted = TryParseCrossReferenceStream(previousCrossReferenceLocation, pdfScanner, null, out extractedTablePart);
+                    }
+                    catch (Exception)
+                    {
+                        crossReferenceStreamExtracted = false;
+                    }
+                    
+                    if (!crossReferenceStreamExtracted)
                     {
                         if (!TryBruteForceXrefTableLocate(bytes, previousCrossReferenceLocation, out var actualOffset))
                         {
@@ -169,6 +180,7 @@
                         continue;
                     }
 
+                    var tablePart = extractedTablePart!;
                     table.Add(tablePart);
 
                     previousCrossReferenceLocation = tablePart.Previous;
